@@ -14,8 +14,9 @@ Farmers need a quick field-level flood decision; administrators need authenticat
 
 ## Implemented (2026-02-01)
 - Auth, field CRUD, area calculation, DEMO SAR analysis, flood map, dashboard, alerts, soil/weather panels, recommendations, readiness, device and seed API contracts, Docker/README, Swagger.
+- Field workbench with visible create/edit/delete controls, exact WGS84 geodesic area calculation, optional PostGIS table/sync through `POSTGIS_DATABASE_URL`, flood history bars, and downloadable PDF evidence reports with non-official assessment disclaimer (2026-09-07).
 
 ## Backlog
-- P0: PostGIS geometry persistence and true raster Sentinel-1 processing.
-- P1: persisted soil/weather/crop history, PDF evidence reports, farmer registration UI, flood history chart.
+- P0: true raster Sentinel-1 processing and production field-drawing gestures.
+- P1: persisted soil/weather/crop history, production weather provider, farmer registration UI.
 - P2: production weather provider, Random Forest training artifact, real seed image model, hardware ingestion.
