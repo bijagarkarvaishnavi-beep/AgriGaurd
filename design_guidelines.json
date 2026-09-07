@@ -1,0 +1,51 @@
+{
+  "app_type": "hybrid_fullstack",
+  "theme": "dark",
+  "archetype": "THE PERFORMANCE PRO / GEOSPATIAL COMMAND CENTER",
+  "typography": {
+    "heading": "Outfit, sans-serif",
+    "body": "Inter, sans-serif",
+    "mono": "JetBrains Mono, monospace"
+  },
+  "colors": {
+    "primary": "#00F0FF",
+    "secondary": "#7000FF",
+    "background": "#090D16",
+    "card": "#111827",
+    "accent": "#FF3B30",
+    "success": "#10B981",
+    "warning": "#F59E0B"
+  },
+  "image_urls": [
+    {
+      "category": "satellite_field",
+      "url": "https://images.unsplash.com/photo-1619719826894-89d6c4fd5739?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwyfHxzYXRlbGxpdGUlMjByYWRhciUyMGVhcnRoJTIwb2JzZXJ2YXRpb24lMjBhZ3JpY3VsdHVyZXxlbnwwfHx8fDE3ODg3Njg0ODV8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Aerial view of green agricultural field"
+    },
+    {
+      "category": "tractor_field",
+      "url": "https://images.unsplash.com/photo-1656407410275-e63e689bcd90?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwxfHxzYXRlbGxpdGUlMjByYWRhciUyMGVhcnRoJTIwb2JzZXJ2YXRpb24lMjBhZ3JpY3VsdHVyZXxlbnwwfHx8fDE3ODg3Njg0ODV8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Tractor spraying field"
+    }
+  ],
+  "components": [
+    "Dashboard",
+    "FieldManagerLeafletMap",
+    "SARFloodEngine",
+    "FloodMapViewer",
+    "SoilEnginePanel",
+    "WeatherPanel",
+    "AICropRecommendation",
+    "PlantingReadiness",
+    "SeedScreening",
+    "FloodHistory",
+    "AlertsFeed",
+    "PDFReports"
+  ],
+  "universal_guidelines": [
+    "No pure black or pure white without tinting",
+    "Interactive elements must include data-testid",
+    "Use sonner for toasts",
+    "Dark mode geospatial command center aesthetics with cyan/teal and neon accents"
+  ]
+}

@@ -1,0 +1,2 @@
+# Auth testing playbook
+Use `POST /api/auth/login` with admin@example.com/admin123, then send the returned bearer token to `GET /api/auth/me`. Verify invalid credentials return 401, fields and flood endpoints reject missing tokens, and registration rejects duplicate emails.

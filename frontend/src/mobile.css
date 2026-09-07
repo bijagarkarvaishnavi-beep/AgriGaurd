@@ -1,0 +1,2 @@
+.mobile-logout{display:none;background:none;color:#a7b7bf;font-size:18px}
+@media (max-width:900px){.mobile-logout{display:block}}
