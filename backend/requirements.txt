@@ -1,3 +1,4 @@
+affine==3.0.1
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
 aiosignal==1.4.0
@@ -15,6 +16,8 @@ certifi==2026.7.22
 cffi==2.1.1
 charset-normalizer==3.5.1
 click==8.5.0
+click-plugins==1.1.1.2
+cligj==0.7.2
 cryptography==50.0.1
 distro==1.9.0
 dnspython==2.8.0
@@ -97,6 +100,7 @@ python-jose==3.5.0
 python-multipart==0.0.32
 pytokens==0.4.1
 PyYAML==6.0.3
+rasterio==1.4.4
 referencing==0.37.0
 regex==2026.9.3
 reportlab==5.0.1
@@ -107,6 +111,7 @@ rpds-py==2026.6.3
 rsa==4.9.1
 s3transfer==0.19.2
 s5cmd==0.2.0
+shapely==2.1.2
 shellingham==1.5.4
 six==1.17.0
 sniffio==1.3.1

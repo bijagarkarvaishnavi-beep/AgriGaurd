@@ -101,3 +101,33 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+user_problem_statement: "SAR Satellite Crop Flood Engine — this iteration: PostGIS-first canonical persistence (Mongo fallback), Leaflet click-to-draw/drag-to-edit field polygons, deterministic engine unit tests, raster NaN hardening + realistic partial DEMO flood (~55%)."
+backend:
+  - task: "PostGIS canonical storage (users/fields/analyses/sentinel_runs) with Mongo fallback"
+    implemented: true
+    working: "NA"
+    file: "backend/storage.py, backend/sql/init.sql, backend/server.py"
+    priority: "high"
+    needs_retesting: true
+  - task: "Deterministic engine (flood %, severity, soil, crops, readiness, alerts, demo intersection)"
+    implemented: true
+    working: "NA"
+    file: "backend/engine.py, backend/tests/test_engine.py"
+    priority: "high"
+    needs_retesting: true
+  - task: "Sentinel-1 raster run: field-relative DEMO raster (partial flood), NaN-safe PNG previews, upload validation"
+    implemented: true
+    working: "NA"
+    file: "backend/raster.py"
+    priority: "high"
+    needs_retesting: true
+frontend:
+  - task: "Leaflet draw/edit polygon in field editor synced with JSON textarea; dashboard map uses real field polygon and refreshes on field changes"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/FieldDrawMap.js, frontend/src/Enhancements.js, frontend/src/App.js"
+    priority: "high"
+    needs_retesting: true
+agent_communication:
+  - agent: "main"
+    message: "pytest (29) passing locally incl. PostGIS roundtrip. Need full E2E regression: auth, field CRUD via map drawing, DEMO analysis ~55%, Sentinel DEMO run + artifacts + PDF, upload rejection, ownership isolation."

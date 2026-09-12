@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 3 backend + frontend regression. Restored missing postgres data dir (initdb, sar_crop DB, PostGIS ext, init.sql schema) — then backend came up as 'PostGIS (canonical)'. All 40 pytest tests pass (test_engine, test_storage_postgis, test_mvp_api, test_regression_iter3). Frontend flows verified: admin login, dashboard (55.2% flood, 271.99 ac, 4 alerts, HIGH severity, map polygon), run SAR analysis (system-notice, chart, trend-signals), sentinel run no-files (53.5%, HIGH, DEMO SAR, 4 artifact rows), PDF download, click-to-draw map with vertex count 0→4, undo→3, clear→0, invalid JSON polygon shows field-polygon-error, save/edit/delete field, logout, mobile 390x844 shows mobile-logout-button and farmer tools + draw map.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/fields/{id}/report (uses raster.png_preview)", "issue": "RuntimeWarning: invalid value encountered in cast still emitted by numpy during sentinel/PDF path (backend.err.log server.py:130). NaN-safe conversion in raster.png_preview may still hit a nan->uint8 cast when scaled has NaNs and lo==hi. Not a functional break (tests pass) but the iteration goal was zero warnings."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SentinelTools artifact <img>", "issue": "Artifact thumbnails render as broken images (naturalWidth=0/None) because <img src> is fetched by the browser without the Authorization header and the artifact endpoint requires Bearer auth. Data itself is available (backend returns 200 image/png with auth).", "selector": "[data-testid='sentinel-artifact-*.png']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_regression_iter3.py",
+    "/app/backend/tests/test_mvp_api.py",
+    "/app/backend/tests/test_engine.py",
+    "/app/backend/tests/test_storage_postgis.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix sentinel artifact <img> auth: either serve artifacts through a short-lived signed URL / cookie, expose an unauthenticated static path for public DEMO artifacts, or fetch via fetch()+Authorization and set as blob URL in SentinelTools.js so thumbnails render in the browser.",
+    "Eliminate remaining 'RuntimeWarning: invalid value encountered in cast' by masking NaNs before .astype('uint8') in raster.png_preview (e.g. np.where(np.isfinite(scaled), scaled, 0).clip(0,255).astype('uint8')) and guard the lo==hi / all-NaN branch.",
+    "Container fork lost the postgres data directory (/var/lib/postgresql/15/main was gone and the 'postgres' OS user missing). Add an idempotent bootstrap (useradd postgres, initdb, create sar user + sar_crop DB, run backend/sql/init.sql) into a startup hook so the backend does not silently fall back to MongoDB after a reset."
+  ],
+  "critical_code_review_comments": [
+    "Environment fragility: PostGIS is now canonical, but if the OS user or data dir is missing the backend logs 'PostGIS unavailable, falling back to MongoDB' and keeps running with a different store — the /api/ storage banner is the only surface signal. Consider failing fast (or a health endpoint that returns non-200) when the configured canonical store is unavailable, so silent MongoDB fallback in production is not possible.",
+    "Sentinel artifact endpoint requires Bearer auth but the SentinelTools component renders plain <img src> — inherently broken in-browser without an interceptor. Either loosen auth for DEMO artifacts (they are public demo pixels) or fetch as blob.",
+    "JWT is still in localStorage; playbook check for httpOnly cookie session is unmet (carried over from iter 2)."
+  ],
+  "updated_files": [
+    "/etc/passwd (created postgres user), /var/lib/postgresql/15/main (initdb), postgres role + sar_crop DB + init.sql applied. No app source files modified.",
+    "/app/test_reports/iteration_3.json",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {"backend": "100% (40/40 pytest)", "frontend": "100% of tested flows (1 known non-blocker: artifact <img> auth)"},
+  "test_credentials": "admin@example.com / admin123 (per /app/memory/test_credentials.md).",
+  "seed_data_creation": "Registered a couple of TEST_iso_* farmers during ownership isolation tests (safe to leave, as noted in agent-to-agent context). TEST_UI_Field created via UI was deleted at end of run. TEST_Square/TEST_Square2/TEST_Cleanup fields are created and deleted within their own tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "PostGIS bootstrap: sudo useradd -r -s /bin/bash -d /var/lib/postgresql postgres; chown -R postgres /var/lib/postgresql /etc/postgresql /var/log/postgresql; sudo -u postgres /usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/15/main; cp /etc/postgresql/15/main/{postgresql,pg_hba}.conf into the data dir; then CREATE USER sar PASSWORD 'sar' SUPERUSER; CREATE DATABASE sar_crop OWNER sar; psql -d sar_crop -f /app/backend/sql/init.sql. After that, supervisorctl restart postgres backend. Regression: cd /app/backend && REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest tests -q. Frontend flows all pass at desktop 1920x1080 and mobile 390x844. The only user-visible frontend issue is broken sentinel artifact thumbnails due to missing Authorization header on <img>.",
+  "rca of the issue": "Two environmental problems and two application-level nits. (1) Container fork removed /var/lib/postgresql/15/main and the 'postgres' OS user, so supervisord could not start postgres, backend then either fell back to Mongo or the ingress returned 502 while backend was restarting; fixed by initdb + sar_crop DB + init.sql. (2) After PostGIS was up all 40 backend tests passed deterministically (flood 55.2%, area 271.99 ac). (3) Sentinel artifact <img> tags call GET /api/sentinel1/results/{run_id}/{filename} which requires Bearer auth, but the browser <img> tag cannot attach the token; result: broken thumbnails in SentinelTools. (4) RuntimeWarning: invalid value encountered in cast is still logged during raster png rendering (raster.py:47 nan_to_num + astype uint8 path or the lo==hi branch)."
+}

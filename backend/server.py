@@ -1,36 +1,44 @@
 from dotenv import load_dotenv
 load_dotenv()
-import os, uuid, math, logging, io
+import os, uuid, logging, io
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import bcrypt, jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, UploadFile, File, Form
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr, field_validator
-from motor.motor_asyncio import AsyncIOMotorClient
-from pyproj import Geod
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+import engine, raster
+from storage import build_store
 
-client = AsyncIOMotorClient(os.environ['MONGO_URL']); db = client[os.environ['DB_NAME']]
-app = FastAPI(title='SAR Satellite Crop Flood Engine', version='1.0.0')
+logging.basicConfig(level=logging.INFO)
+app = FastAPI(title='SAR Satellite Crop Flood Engine', version='1.1.0')
 api = APIRouter(prefix='/api')
 SECRET = os.environ.get('JWT_SECRET', 'local-demo-secret-change-me')
-postgis_pool = None
+store = None
+DEMO_SOIL = {'type': 'Loam', 'moisture': 78}
+DEMO_WEATHER = {'temperature': 27, 'rainfall': 38, 'humidity': 84, 'forecast': 'Heavy rain likely', 'data_mode': 'DEMO WEATHER'}
+SEED_POLYGON = [[51.505, -0.09], [51.51, -0.08], [51.508, -0.06], [51.502, -0.065]]
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def public(doc):
     if not doc: return None
-    return {k: v for k, v in doc.items() if k not in {'_id','password_hash'}}
-def token(user): return jwt.encode({'sub': user['id'], 'email': user['email'], 'role': user['role'], 'exp': datetime.now(timezone.utc)+timedelta(days=2)}, SECRET, algorithm='HS256')
+    return {k: v for k, v in doc.items() if k not in {'_id', 'password_hash'}}
+def token(user): return jwt.encode({'sub': user['id'], 'email': user['email'], 'role': user['role'], 'exp': datetime.now(timezone.utc) + timedelta(days=2)}, SECRET, algorithm='HS256')
 async def current(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith('Bearer '): raise HTTPException(401, 'Login required')
     try: payload = jwt.decode(authorization[7:], SECRET, algorithms=['HS256'])
     except jwt.PyJWTError: raise HTTPException(401, 'Invalid or expired session')
-    user = await db.users.find_one({'id': payload['sub']}, {'_id': 0, 'password_hash': 0})
+    user = await store.user_by_id(payload['sub'])
     if not user: raise HTTPException(401, 'User not found')
-    return user
+    return public(user)
+async def owned_field(field_id, user):
+    field = await store.get_field(field_id, user['id'])
+    if not field: raise HTTPException(404, 'Field not found')
+    return field
 
 class AuthIn(BaseModel): email: EmailStr; password: str = Field(min_length=6); name: str = Field(min_length=2); role: str = 'farmer'
 class LoginIn(BaseModel): email: EmailStr; password: str
@@ -41,130 +49,141 @@ class FieldIn(BaseModel):
     @field_validator('polygon')
     @classmethod
     def valid_polygon(cls, value):
-        if len(value) < 3 or any(len(point) != 2 for point in value):
-            raise ValueError('polygon must contain at least three latitude/longitude pairs')
-        if any(abs(point[0]) > 90 or abs(point[1]) > 180 for point in value):
-            raise ValueError('polygon coordinates must be valid WGS84 latitude/longitude values')
+        problem = engine.polygon_problem(value)
+        if problem: raise ValueError(problem)
         return value
 class AnalysisIn(BaseModel): field_id: str; before_date: str = '2024-06-01'; after_date: str = '2024-06-15'
 
 @api.get('/')
-async def root(): return {'service':'SAR Satellite Crop Flood Engine','status':'operational','data_mode':'DEMO/TEST'}
+async def root(): return {'service': 'SAR Satellite Crop Flood Engine', 'status': 'operational', 'data_mode': 'DEMO/TEST', 'storage': store.name if store else 'initialising'}
+@api.get('/health')
+async def health():
+    degraded = bool(os.environ.get('POSTGIS_DATABASE_URL')) and (store is None or store.fallback)
+    body = {'status': 'degraded' if degraded else 'ok', 'storage': store.name if store else 'initialising', 'configured_canonical': 'PostGIS' if os.environ.get('POSTGIS_DATABASE_URL') else 'MongoDB'}
+    return JSONResponse(body, status_code=503 if degraded else 200)
 @api.post('/auth/register')
 async def register(body: AuthIn):
-    email=body.email.lower()
-    if await db.users.find_one({'email':email}): raise HTTPException(409,'Email already registered')
-    user={'id':str(uuid.uuid4()),'email':email,'name':body.name,'role':body.role if body.role in ('farmer','admin') else 'farmer','password_hash':bcrypt.hashpw(body.password.encode(),bcrypt.gensalt()).decode(),'created_at':now()}
-    await db.users.insert_one(user); return {'user':public(user),'token':token(user)}
+    email = body.email.lower()
+    if await store.user_by_email(email): raise HTTPException(409, 'Email already registered')
+    user = {'id': str(uuid.uuid4()), 'email': email, 'name': body.name, 'role': body.role if body.role in ('farmer', 'admin') else 'farmer', 'password_hash': bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode(), 'created_at': now()}
+    await store.create_user(user); return {'user': public(user), 'token': token(user)}
 @api.post('/auth/login')
 async def login(body: LoginIn):
-    user=await db.users.find_one({'email':body.email.lower()})
-    if not user or not bcrypt.checkpw(body.password.encode(),user['password_hash'].encode()): raise HTTPException(401,'Email or password is incorrect')
-    return {'user':public(user),'token':token(user)}
+    user = await store.user_by_email(body.email.lower())
+    if not user or not bcrypt.checkpw(body.password.encode(), user['password_hash'].encode()): raise HTTPException(401, 'Email or password is incorrect')
+    return {'user': public(user), 'token': token(user)}
 @api.get('/auth/me')
 async def me(user=Depends(current)): return user
 @api.post('/auth/logout')
-async def logout(): return {'ok':True}
+async def logout(): return {'ok': True}
 
-def hectares(poly):
-    # Exact WGS84 geodesic area now; PostGIS uses the same geography calculation when configured.
-    lonlat=[(point[1],point[0]) for point in poly]
-    area, _ = Geod(ellps='WGS84').polygon_area_perimeter(*zip(*lonlat))
-    return max(0.01, round(abs(area)/10000,2))
-async def postgis_field(doc):
-    if not postgis_pool: return
-    try:
-        points=', '.join(f'{p[1]} {p[0]}' for p in doc['polygon'])
-        await postgis_pool.execute('INSERT INTO fields (id, owner_id, name, crop, geom, hectares, acres) VALUES ($1,$2,$3,$4,ST_SetSRID(ST_GeomFromText($5),4326)::geography,$6,$7) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,crop=EXCLUDED.crop,geom=EXCLUDED.geom,hectares=EXCLUDED.hectares,acres=EXCLUDED.acres',doc['id'],doc['owner_id'],doc['name'],doc['crop'],f'POLYGON(({points}, {doc["polygon"][0][1]} {doc["polygon"][0][0]}))',doc['hectares'],doc['acres'])
-    except Exception as exc: logging.warning('PostGIS sync skipped: %s', exc)
+def field_doc(owner_id, body):
+    ha = engine.hectares(body.polygon)
+    return {'id': str(uuid.uuid4()), 'owner_id': owner_id, 'name': body.name, 'crop': body.crop, 'polygon': body.polygon, 'hectares': ha, 'acres': engine.acres(ha), 'created_at': now()}
 @api.get('/fields')
-async def fields(user=Depends(current)):
-    return [public(x) async for x in db.fields.find({'owner_id':user['id']},{'_id':0})]
+async def fields(user=Depends(current)): return await store.list_fields(user['id'])
 @api.post('/fields')
-async def create_field(body: FieldIn,user=Depends(current)):
-    area=hectares(body.polygon); doc={'id':str(uuid.uuid4()),'owner_id':user['id'],'name':body.name,'crop':body.crop,'polygon':body.polygon,'hectares':area,'acres':round(area*2.47105,2),'geometry_source':'WGS84 geodesic / PostGIS-ready','created_at':now()}
-    await db.fields.insert_one(doc); await postgis_field(doc); return public(dict(doc))
+async def create_field(body: FieldIn, user=Depends(current)): return await store.create_field(field_doc(user['id'], body))
 @api.put('/fields/{field_id}')
-async def update_field(field_id:str,body:FieldIn,user=Depends(current)):
-    if not await db.fields.find_one({'id':field_id,'owner_id':user['id']}): raise HTTPException(404,'Field not found')
-    doc=body.model_dump(); doc.update({'hectares':hectares(body.polygon),'acres':round(hectares(body.polygon)*2.47105,2)})
-    await db.fields.update_one({'id':field_id},{'$set':doc}); updated=await db.fields.find_one({'id':field_id},{'_id':0}); await postgis_field(updated); return public(updated)
+async def update_field(field_id: str, body: FieldIn, user=Depends(current)):
+    await owned_field(field_id, user)
+    return await store.update_field(field_id, user['id'], body.name, body.crop, body.polygon)
 @api.delete('/fields/{field_id}')
-async def delete_field(field_id:str,user=Depends(current)):
-    r=await db.fields.delete_one({'id':field_id,'owner_id':user['id']})
-    if not r.deleted_count: raise HTTPException(404,'Field not found')
-    return {'ok':True}
+async def delete_field(field_id: str, user=Depends(current)):
+    if not await store.delete_field(field_id, user['id']): raise HTTPException(404, 'Field not found')
+    return {'ok': True}
 
 def flood_result(field, before='2024-06-01', after='2024-06-15'):
-    hectares=field['hectares']; flooded=round(hectares*.65,2); pct=round(flooded/hectares*100,1)
-    severity='HIGH' if pct>=50 else 'MEDIUM' if pct>=20 else 'LOW'
-    return {'id':str(uuid.uuid4()),'field_id':field['id'],'field_name':field['name'],'field_hectares':hectares,'field_acres':field['acres'],'flooded_hectares':flooded,'flooded_acres':round(flooded*2.47105,2),'flood_percentage':pct,'severity':severity,'before_date':before,'after_date':after,'data_mode':'DEMO SAR','mask_pixels':14280,'created_at':now()}
+    flooded, pct = engine.demo_flood(field['polygon'])
+    return {'id': str(uuid.uuid4()), 'field_id': field['id'], 'field_name': field['name'], 'field_hectares': field['hectares'], 'field_acres': field['acres'], 'flooded_hectares': flooded, 'flooded_acres': engine.acres(flooded),
+            'flood_percentage': pct, 'severity': engine.severity(pct), 'before_date': before, 'after_date': after, 'data_mode': 'DEMO SAR', 'method': 'Deterministic DEMO waterbody ∩ field polygon (geodesic)', 'created_at': now()}
+def context(field, flood):
+    soil = engine.soil_assessment(DEMO_SOIL['type'], DEMO_SOIL['moisture'], DEMO_WEATHER['rainfall']) | {'data_mode': 'ESTIMATED / DEMO'}
+    crops = engine.crop_recommendations(soil)
+    readiness = engine.planting_readiness(flood['flood_percentage'], soil, DEMO_WEATHER['rainfall'])
+    return {'field': field, 'flood': flood, 'soil': soil, 'weather': DEMO_WEATHER, 'crops': crops, 'readiness': readiness, 'alerts': engine.alerts(flood, soil, readiness)}
+
+def raster_bytes(upload, field, after):
+    if not upload or not upload.filename: return raster.demo_raster(field['polygon'] if field else None, after), True
+    if not upload.filename.lower().endswith(('.tif', '.tiff')): raise HTTPException(415, 'Only GeoTIFF uploads are accepted')
+    data = upload.file.read(100 * 1024 * 1024 + 1)
+    if len(data) > 100 * 1024 * 1024: raise HTTPException(413, 'Raster exceeds 100 MB limit')
+    if not data: raise HTTPException(422, 'Uploaded GeoTIFF is empty')
+    return data, False
+@api.post('/sentinel1/runs')
+async def sentinel_run(before: UploadFile | None = File(None), after: UploadFile | None = File(None), field_id: str | None = Form(None), threshold_db: float = Form(-7.0), user=Depends(current)):
+    if not -30 <= threshold_db <= 0: raise HTTPException(422, 'threshold_db must be between -30 and 0')
+    field = await owned_field(field_id, user) if field_id else None
+    before_data, b_demo = raster_bytes(before, field, False); after_data, a_demo = raster_bytes(after, field, True)
+    result = raster.raster_run(before_data, after_data, field, threshold_db, 'DEMO SAR' if b_demo or a_demo else 'SENTINEL-1 UPLOAD')
+    await store.add_run(result); return result
+@api.get('/sentinel1/results/{run_id}/{filename}')
+async def sentinel_artifact(run_id: str, filename: str, user=Depends(current)):
+    run = await store.get_run(run_id)
+    if not run or filename not in {os.path.basename(x) for x in run.get('artifacts', {}).values()}: raise HTTPException(404, 'Artifact not found')
+    path = os.path.join(raster.RESULTS_DIR, run_id, filename)
+    if not os.path.isfile(path): raise HTTPException(404, 'Artifact not found')
+    return StreamingResponse(open(path, 'rb'), media_type='image/png')
 @api.post('/flood/analyze')
-async def analyze(body:AnalysisIn,user=Depends(current)):
-    field=await db.fields.find_one({'id':body.field_id,'owner_id':user['id']},{'_id':0})
-    if not field: raise HTTPException(404,'Field not found')
-    result=flood_result(field,body.before_date,body.after_date)
-    await db.analyses.insert_one(result)
-    return public(dict(result))
+async def analyze(body: AnalysisIn, user=Depends(current)):
+    field = await owned_field(body.field_id, user)
+    result = flood_result(field, body.before_date, body.after_date)
+    await store.add_analysis(result); return result
 @api.get('/fields/{field_id}/analyses')
-async def history(field_id:str,user=Depends(current)):
-    if not await db.fields.find_one({'id':field_id,'owner_id':user['id']},{'_id':0}): raise HTTPException(404,'Field not found')
-    return [public(x) async for x in db.analyses.find({'field_id':field_id},{'_id':0}).sort('created_at',-1).limit(20)]
+async def history(field_id: str, user=Depends(current)):
+    await owned_field(field_id, user); return await store.analyses(field_id)
 @api.get('/fields/{field_id}/report')
-async def report(field_id:str,user=Depends(current)):
-    field=await db.fields.find_one({'id':field_id,'owner_id':user['id']},{'_id':0})
-    if not field: raise HTTPException(404,'Field not found')
-    flood=await db.analyses.find_one({'field_id':field_id},{'_id':0},sort=[('created_at',-1)]) or flood_result(field)
-    out=io.BytesIO(); pdf=canvas.Canvas(out,pagesize=A4); width,height=A4
-    pdf.setTitle('Flood Evidence Report - '+field['name']); pdf.setFillColorRGB(.02,.12,.16); pdf.rect(0,height-95,width,95,fill=1,stroke=0)
-    pdf.setFillColorRGB(0,.85,.9); pdf.setFont('Helvetica-Bold',18); pdf.drawString(42,height-55,'SENTINEL CROP AI')
-    pdf.setFillColorRGB(.1,.1,.1); pdf.setFont('Helvetica-Bold',15); pdf.drawString(42,height-135,'Flood Evidence Report')
-    pdf.setFont('Helvetica',10); y=height-165
-    lines=[('Field',field['name']),('Crop',field['crop']),('Area',f"{field['hectares']} ha / {field['acres']} acres"),('Flooded area',f"{flood['flooded_hectares']} ha / {flood['flooded_acres']} acres"),('Flood percentage',f"{flood['flood_percentage']}%"),('Severity',flood['severity']),('SAR dates',f"{flood['before_date']} → {flood['after_date']}"),('Soil','Loam · Saturated · Waterlogging risk HIGH'),('Weather','27°C · 38 mm rainfall · 84% humidity'),('Recommendation','Rice · 91/100 · NOT RECOMMENDED to plant now')]
-    for label,value in lines: pdf.setFillColorRGB(.25,.3,.33); pdf.drawString(42,y,label.upper()); pdf.setFillColorRGB(.05,.07,.09); pdf.drawString(180,y,value); y-=25
-    pdf.setFillColorRGB(.75,.2,.18); pdf.setFont('Helvetica-Bold',10); pdf.drawString(42,y-15,'DISCLAIMER'); pdf.setFillColorRGB(.2,.2,.2); pdf.setFont('Helvetica',9); pdf.drawString(42,y-32,'This is an insurance-supporting evidence report, NOT an official insurance assessment.')
-    pdf.drawString(42,y-47,'SAR, soil, weather, and recommendations may contain DEMO/ESTIMATED values. Verify with qualified assessors.')
+async def report(field_id: str, user=Depends(current)):
+    field = await owned_field(field_id, user)
+    flood = await store.latest_analysis(field_id) or flood_result(field)
+    ctx = context(field, flood); sentinel = await store.latest_run(field_id)
+    out = io.BytesIO(); pdf = canvas.Canvas(out, pagesize=A4); width, height = A4
+    pdf.setTitle('Flood Evidence Report - ' + field['name']); pdf.setFillColorRGB(.02, .12, .16); pdf.rect(0, height - 95, width, 95, fill=1, stroke=0)
+    pdf.setFillColorRGB(0, .85, .9); pdf.setFont('Helvetica-Bold', 18); pdf.drawString(42, height - 55, 'SENTINEL CROP AI')
+    pdf.setFillColorRGB(.1, .1, .1); pdf.setFont('Helvetica-Bold', 15); pdf.drawString(42, height - 135, 'Flood Evidence Report')
+    y = height - 165
+    if sentinel:
+        pdf.setFont('Helvetica-Bold', 9); pdf.setFillColorRGB(.25, .3, .33); pdf.drawString(42, height - 155, f"SAR EVIDENCE SNAPSHOTS · {sentinel['source']} · {sentinel['flood_percentage']}% flooded")
+        x = 42
+        for key in ('before.png', 'after.png', 'flood-mask.png'):
+            path = os.path.join(raster.RESULTS_DIR, sentinel['id'], key)
+            if os.path.isfile(path): pdf.drawImage(ImageReader(path), x, height - 270, width=155, height=95, preserveAspectRatio=True, anchor='c'); x += 170
+        y = height - 295
+    soil, weather, crop, ready = ctx['soil'], ctx['weather'], ctx['crops'][0], ctx['readiness']
+    lines = [('Field', field['name']), ('Crop', field['crop']), ('Area', f"{field['hectares']} ha / {field['acres']} acres"), ('Geometry', field['geometry_source']), ('Flooded area', f"{flood['flooded_hectares']} ha / {flood['flooded_acres']} acres"), ('Flood percentage', f"{flood['flood_percentage']}%"), ('Severity', flood['severity']), ('SAR dates', f"{flood['before_date']} → {flood['after_date']}"),
+             ('Soil', f"{soil['type']} · {soil['condition']} · Waterlogging risk {soil['waterlogging_risk']}"), ('Weather', f"{weather['temperature']}°C · {weather['rainfall']} mm rainfall · {weather['humidity']}% humidity"), ('Recommendation', f"{crop['name']} · {crop['score']}/100 · {ready['status']} to plant now")]
+    pdf.setFont('Helvetica', 10)
+    for label, value in lines: pdf.setFillColorRGB(.25, .3, .33); pdf.drawString(42, y, label.upper()); pdf.setFillColorRGB(.05, .07, .09); pdf.drawString(180, y, value); y -= 25
+    pdf.setFillColorRGB(.75, .2, .18); pdf.setFont('Helvetica-Bold', 10); pdf.drawString(42, y - 15, 'DISCLAIMER'); pdf.setFillColorRGB(.2, .2, .2); pdf.setFont('Helvetica', 9); pdf.drawString(42, y - 32, 'This is an insurance-supporting evidence report, NOT an official insurance assessment.')
+    pdf.drawString(42, y - 47, 'SAR, soil, weather, and recommendations may contain DEMO/ESTIMATED values. Verify with qualified assessors.')
     pdf.save(); out.seek(0)
-    return StreamingResponse(out,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{field["name"].replace(" ","_")}_flood_report.pdf"'})
+    return StreamingResponse(out, media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename="{field["name"].replace(" ", "_")}_flood_report.pdf"'})
 @api.get('/dashboard')
 async def dashboard(user=Depends(current)):
-    field=await db.fields.find_one({'owner_id':user['id']},{'_id':0})
-    if not field: return {'field':None,'alerts':[]}
-    latest=await db.analyses.find_one({'field_id':field['id']},{'_id':0},sort=[('created_at',-1)]) or flood_result(field)
-    soil={'type':'Loam','moisture':78,'condition':'Saturated','waterlogging_risk':'HIGH','data_mode':'ESTIMATED / DEMO'}
-    weather={'temperature':27,'rainfall':38,'humidity':84,'forecast':'Heavy rain likely','data_mode':'DEMO WEATHER'}
-    crops=[{'name':'Rice','score':91,'reason':'Tolerates saturated soil','warning':'Delay transplanting until water recedes'},{'name':'Soybean','score':64,'reason':'Good seasonal fit','warning':'Needs drainage before sowing'},{'name':'Maize','score':42,'reason':'Available season window','warning':'Not suitable for current waterlogging'}]
-    alerts=['Flood detected inside field','HIGH severity flood condition','Waterlogging risk is HIGH','Planting not recommended until drainage improves']
-    return {'field':field,'flood':latest,'soil':soil,'weather':weather,'crops':crops,'readiness':{'percentage':18,'status':'NOT RECOMMENDED','reason':'Flooded soil and heavy rain window'},'alerts':alerts}
+    field = await store.first_field(user['id'])
+    if not field: return {'field': None, 'alerts': []}
+    latest = await store.latest_analysis(field['id']) or flood_result(field)
+    return context(field, latest)
 @api.post('/devices/register')
-async def device_register(payload:dict,user=Depends(current)): return {'device_id':str(uuid.uuid4()),'status':'registered','mode':'OPTIONAL HARDWARE'}
+async def device_register(payload: dict, user=Depends(current)): return {'device_id': str(uuid.uuid4()), 'status': 'registered', 'mode': 'OPTIONAL HARDWARE'}
 @api.post('/seed/upload')
-async def seed_upload(file:UploadFile=File(...),user=Depends(current)): return {'upload_id':str(uuid.uuid4()),'filename':file.filename,'status':'ready_for_analysis','mode':'DEMO'}
+async def seed_upload(file: UploadFile = File(...), user=Depends(current)): return {'upload_id': str(uuid.uuid4()), 'filename': file.filename, 'status': 'ready_for_analysis', 'mode': 'DEMO'}
 @api.post('/seed/analyze')
-async def seed_analyze(payload:dict,user=Depends(current)): return {'quality_score':82,'classification':'HEALTHY-LOOKING','notes':['No obvious discoloration detected','Basic visual screening only'],'disclaimer':'DEMO analysis; not guaranteed real/fake seed detection'}
+async def seed_analyze(payload: dict, user=Depends(current)): return {'quality_score': 82, 'classification': 'HEALTHY-LOOKING', 'notes': ['No obvious discoloration detected', 'Basic visual screening only'], 'disclaimer': 'DEMO analysis; not guaranteed real/fake seed detection'}
 @api.get('/fields/{field_id}/seed-tests')
-async def seed_history(field_id:str,user=Depends(current)): return []
+async def seed_history(field_id: str, user=Depends(current)): return []
 
 app.include_router(api)
-cors_origins=os.environ.get('CORS_ORIGINS','*').split(',')
-app.add_middleware(CORSMiddleware,allow_credentials='*' not in cors_origins,allow_origins=cors_origins,allow_methods=['*'],allow_headers=['*'])
+cors_origins = os.environ.get('CORS_ORIGINS', '*').split(',')
+app.add_middleware(CORSMiddleware, allow_credentials='*' not in cors_origins, allow_origins=cors_origins, allow_methods=['*'], allow_headers=['*'])
+
 @app.on_event('startup')
 async def startup():
-    global postgis_pool
-    if os.environ.get('POSTGIS_DATABASE_URL'):
-        try:
-            import asyncpg
-            postgis_pool=await asyncpg.create_pool(os.environ['POSTGIS_DATABASE_URL'])
-            async with postgis_pool.acquire() as conn:
-                await conn.execute('CREATE EXTENSION IF NOT EXISTS postgis; CREATE TABLE IF NOT EXISTS fields (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, crop TEXT NOT NULL, geom geography(POLYGON,4326), hectares DOUBLE PRECISION, acres DOUBLE PRECISION)')
-        except Exception as exc: logging.warning('PostGIS unavailable; Mongo remains active: %s', exc)
-    await db.users.create_index('email',unique=True)
-    if not await db.users.find_one({'email':'admin@example.com'}):
-        user={'id':str(uuid.uuid4()),'email':'admin@example.com','name':'Demo Admin','role':'admin','password_hash':bcrypt.hashpw(b'admin123',bcrypt.gensalt()).decode(),'created_at':now()}; await db.users.insert_one(user)
-    admin=await db.users.find_one({'email':'admin@example.com'},{'_id':0})
-    if admin and not await db.fields.find_one({'owner_id':admin['id']}):
-        poly=[[51.505,-0.09],[51.51,-0.08],[51.508,-0.06],[51.502,-0.065]]
-        area=hectares(poly)
-        await db.fields.insert_one({'id':str(uuid.uuid4()),'owner_id':admin['id'],'name':'North Meadow · DEMO','crop':'Wheat','polygon':poly,'hectares':area,'acres':round(area*2.47105,2),'geometry_source':'WGS84 geodesic / PostGIS-ready','created_at':now()})
-    await db.fields.update_many({'geometry_source':{'$exists':False}},{'$set':{'geometry_source':'WGS84 geodesic / PostGIS-ready'}})
-logging.basicConfig(level=logging.INFO)
+    global store
+    store = await build_store()
+    admin = await store.user_by_email('admin@example.com')
+    if not admin:
+        admin = {'id': str(uuid.uuid4()), 'email': 'admin@example.com', 'name': 'Demo Admin', 'role': 'admin', 'password_hash': bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode(), 'created_at': now()}
+        await store.create_user(admin)
+    if not await store.first_field(admin['id']):
+        await store.create_field(field_doc(admin['id'], FieldIn(name='North Meadow · DEMO', crop='Wheat', polygon=SEED_POLYGON)))
