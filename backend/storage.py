@@ -90,6 +90,16 @@ class PostgisStore:
         r = await self.pool.fetchrow('SELECT payload FROM sentinel_runs WHERE field_id=$1 ORDER BY created_at DESC LIMIT 1', field_id)
         return r['payload'] if r else None
 
+    async def add_report(self, rep):
+        await self.pool.execute('INSERT INTO reports (id,field_id,owner_id,payload,created_at) VALUES ($1,$2,$3,$4,$5)', rep['id'], rep['field_id'], rep['owner_id'], rep, datetime.fromisoformat(rep['created_at']))
+
+    async def reports(self, field_id, limit=20):
+        return [r['payload'] for r in await self.pool.fetch('SELECT payload FROM reports WHERE field_id=$1 ORDER BY created_at DESC LIMIT $2', field_id, limit)]
+
+    async def get_report(self, report_id, owner_id):
+        r = await self.pool.fetchrow('SELECT payload FROM reports WHERE id=$1 AND owner_id=$2', report_id, owner_id)
+        return r['payload'] if r else None
+
 
 class MongoStore:
     name = 'MongoDB (fallback)'
@@ -135,6 +145,7 @@ class MongoStore:
         r = await self.db.fields.delete_one({'id': field_id, 'owner_id': owner_id})
         if r.deleted_count:
             await self.db.analyses.delete_many({'field_id': field_id})
+            await self.db.reports.delete_many({'field_id': field_id})
             await self.db.sentinel_runs.update_many({'field_id': field_id}, {'$set': {'field_id': None}})
         return bool(r.deleted_count)
 
@@ -155,6 +166,15 @@ class MongoStore:
 
     async def latest_run(self, field_id):
         return await self.db.sentinel_runs.find_one({'field_id': field_id}, {'_id': 0}, sort=[('created_at', -1)])
+
+    async def add_report(self, rep):
+        await self.db.reports.insert_one(dict(rep))
+
+    async def reports(self, field_id, limit=20):
+        return [x async for x in self.db.reports.find({'field_id': field_id}, {'_id': 0}).sort('created_at', -1).limit(limit)]
+
+    async def get_report(self, report_id, owner_id):
+        return await self.db.reports.find_one({'id': report_id, 'owner_id': owner_id}, {'_id': 0})
 
 
 def _bootstrap_local_postgis(url):

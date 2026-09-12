@@ -29,14 +29,22 @@ function HistoryChart({history}){
   return <div className="history-chart" data-testid="flood-history-chart">{history.slice(0,8).reverse().map((h,i)=><div className="bar-column" key={h.id||i}><div className={`bar sev-${h.severity?.toLowerCase()}`} style={{height:`${Math.max(10,h.flood_percentage)}%`}}><span>{h.flood_percentage}%</span></div><small>{h.after_date}</small></div>)}</div>;
 }
 
+function SavedReports({fieldId,refreshKey}){
+  const [reports,setReports]=useState([]);
+  useEffect(()=>{if(fieldId)api(`/fields/${fieldId}/reports`).then(setReports).catch(()=>setReports([]));else setReports([])},[fieldId,refreshKey]);
+  async function download(r){const blob=await api(`/reports/${r.id}`);const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=r.filename;a.click();URL.revokeObjectURL(url)}
+  if(!reports.length)return null;
+  return <div className="saved-reports" data-testid="saved-reports"><b>SAVED REPORTS · PERSISTENT</b>{reports.slice(0,5).map(r=><button type="button" key={r.id} data-testid={`saved-report-${r.id}`} onClick={()=>download(r)}><span>{r.created_at.slice(0,16).replace('T',' ')}</span><span>{r.flood_percentage}% · {r.severity}</span><span>⇩ {(r.size_bytes/1024).toFixed(0)} KB</span></button>)}</div>;
+}
+
 export default function Enhancements(){
-  const [fields,setFields]=useState([]);const [history,setHistory]=useState([]);const [editing,setEditing]=useState(null);const [showForm,setShowForm]=useState(false);const [initial,setInitial]=useState(blank());const [message,setMessage]=useState('');const [storage,setStorage]=useState('');
+  const [fields,setFields]=useState([]);const [history,setHistory]=useState([]);const [editing,setEditing]=useState(null);const [showForm,setShowForm]=useState(false);const [initial,setInitial]=useState(blank());const [message,setMessage]=useState('');const [storage,setStorage]=useState('');const [reportKey,setReportKey]=useState(0);
   const load=()=>api('/fields').then(setFields).catch(()=>{});
-  useEffect(()=>{load();fetch(`${API}/`).then(r=>r.json()).then(d=>setStorage(d.storage)).catch(()=>{})},[]);
+  useEffect(()=>{load();fetch(`${API}/`).then(r=>r.json()).then(d=>setStorage(d.storage)).catch(()=>{});const onOpen=()=>{open();document.querySelector('[data-testid="farmer-tools-section"]')?.scrollIntoView({behavior:'smooth'})};window.addEventListener('open-new-field',onOpen);window.addEventListener('fields-changed',load);return()=>{window.removeEventListener('open-new-field',onOpen);window.removeEventListener('fields-changed',load)}},[]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(()=>{if(fields[0])api(`/fields/${fields[0].id}/analyses`).then(setHistory).catch(()=>{});else setHistory([])},[fields]);
   function open(field){setEditing(field?.id||null);setInitial(field?{name:field.name,crop:field.crop,polygon:field.polygon,text:JSON.stringify(field.polygon),textError:''}:blank());setShowForm(true)}
   async function remove(id){if(!window.confirm('Delete this field and its saved analyses?'))return;try{await api(`/fields/${id}`,{method:'DELETE'});setMessage('Field deleted');load();window.dispatchEvent(new Event('fields-changed'))}catch(x){setMessage(`Could not delete · ${x.message}`)}}
-  async function report(){if(!fields[0])return;try{const blob=await api(`/fields/${fields[0].id}/report`);const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${fields[0].name.replaceAll(' ','_')}_flood_report.pdf`;a.click();URL.revokeObjectURL(url);setMessage('Flood evidence PDF downloaded')}catch(x){setMessage(`Report failed · ${x.message}`)}}
+  async function report(){if(!fields[0])return;try{const blob=await api(`/fields/${fields[0].id}/report`);const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${fields[0].name.replaceAll(' ','_')}_flood_report.pdf`;a.click();URL.revokeObjectURL(url);setReportKey(k=>k+1);setMessage('Flood evidence PDF downloaded · saved to persistent reports')}catch(x){setMessage(`Report failed · ${x.message}`)}}
   return <section className="enhancements" data-testid="farmer-tools-section">
     <div className="tools-head"><div><span className="eyebrow">FIELD WORKBENCH</span><h3>Farmer field tools</h3><p>Draw boundaries on the map · exact geodesic area · <b data-testid="storage-mode">{storage||'…'}</b></p></div>
       <div className="tool-actions"><button data-testid="new-field-button" onClick={()=>open()}>＋ NEW FIELD</button><button data-testid="download-report-button" onClick={report}>⇩ FLOOD REPORT</button></div></div>
@@ -45,7 +53,7 @@ export default function Enhancements(){
         {fields.map(f=><div className="field-row" data-testid={`field-row-${f.id}`} key={f.id}><div><strong>{f.name}</strong><small>{f.crop} · {f.hectares} ha · {f.acres} ac · {f.polygon.length} vertices</small></div><button data-testid={`edit-field-${f.id}`} onClick={()=>open(f)}>EDIT</button><button data-testid={`delete-field-${f.id}`} className="danger" onClick={()=>remove(f.id)}>DELETE</button></div>)}
         {showForm&&<FieldForm key={editing||'new'} initial={initial} editing={editing} onCancel={()=>{setEditing(null);setShowForm(false)}} onError={setMessage} onSaved={()=>{setMessage(editing?'Field boundary updated · area recalculated':'Field saved with exact geodesic area');setEditing(null);setShowForm(false);load();window.dispatchEvent(new Event('fields-changed'))}}/>}
       </section>
-      <section className="tool-panel"><div className="panel-title"><b>FLOOD HISTORY</b><span className="demo">SAVED ANALYSES</span></div><HistoryChart history={history}/><div className="report-note">Insurance-supporting evidence only · NOT an official insurance assessment</div></section>
+      <section className="tool-panel"><div className="panel-title"><b>FLOOD HISTORY</b><span className="demo">SAVED ANALYSES</span></div><HistoryChart history={history}/><SavedReports fieldId={fields[0]?.id} refreshKey={reportKey}/><div className="report-note">Insurance-supporting evidence only · NOT an official insurance assessment</div></section>
     </div>
     {message&&<div className="tool-message" data-testid="tools-message">{message}</div>}
   </section>;

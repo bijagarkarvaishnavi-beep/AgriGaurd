@@ -17,6 +17,8 @@ services:
     env_file: ./backend/.env
     environment:
       POSTGIS_DATABASE_URL: postgresql://sar:sar@postgis:5432/sar_crop
+      ARTIFACT_DIR: /data/artifacts
+    volumes: ["artifact_data:/data/artifacts"]
     depends_on: [mongo, postgis]
   frontend:
     image: node:20
@@ -28,3 +30,4 @@ services:
 volumes:
   mongo_data:
   postgis_data:
+  artifact_data:

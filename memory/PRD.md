@@ -19,9 +19,12 @@ Build the core working MVP of SAR Satellite Crop Flood Engine, prioritizing auth
   - Leaflet field drawing: click to add vertex, drag to move, click vertex to remove, undo/clear, synced JSON textarea with validation; dashboard map uses the real field polygon and refreshes on field changes.
   - `engine.py` + `tests/test_engine.py` (area, polygon validity incl. self-intersection, flood %, severity boundaries, soil, crops, readiness, alerts) and `tests/test_storage_postgis.py` round-trip.
   - Raster hardening: NaN-safe previews, int-dtype uploads, unreadable GeoTIFF → 422, non-overlap → 422; realistic partial DEMO flood; artifact thumbnails fetched with auth (fixed double `/api` path bug).
+- 2026-09-12 (iteration_4 passed 51/51 backend + all UI flows):
+  - Durable artifacts: `ARTIFACT_DIR` env (preview: `/app/backend/sentinel_results`; Docker: `artifact_data` volume at `/data/artifacts`). Generated PDFs persisted + `reports` table; `GET /api/fields/{id}/reports`, `GET /api/reports/{id}`; UI "Saved reports · persistent" list. Verified byte-identical after backend restart.
+  - Farmer signup: login-page "Create account" form (name/email/password≥6, role farmer/admin), FastAPI 422 detail arrays formatted; empty dashboard CTA opens the field editor.
+  - Field comparison: `GET /api/fields/overview`; map of all owned polygons coloured by latest severity with legend, clickable list, focus/show-all. Components refresh via `fields-changed` window event (also after analysis). Fixed TrendSignals crash for users with no fields.
 
 ## Backlog
-- P1: Durable artifact storage (object storage / volume) — `backend/sentinel_results` is local disk.
-- P1: Farmer registration UI; persisted soil/weather/crop history; live weather provider.
+- P1: Persisted soil/weather/crop history; live weather provider.
 - P2: Vite + TypeScript frontend migration (bounded).
 - P2: httpOnly cookie session instead of localStorage JWT; Random Forest artifact; seed image model; hardware ingestion.

@@ -1,0 +1,20 @@
+.comparison{max-width:1500px;margin:0 auto;padding:0 5vw 40px;background:#090d16}
+.comparison-head{border-top:1px solid #253240;padding-top:28px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}
+.comparison-head h3{margin:9px 0}
+.comparison-head p{color:#81909e;font-size:12px}
+.sev-legend{display:flex;gap:16px;font:10px 'DM Mono',monospace;color:#adbbc2;flex-wrap:wrap}
+.sev-legend span{display:flex;align-items:center;gap:6px}
+.sev-legend i{width:10px;height:10px;display:inline-block}
+.sev-legend b{color:#eaf2f5}
+.comparison-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:22px;margin-top:20px}
+.comparison-map{border:1px solid #253240;min-height:380px}
+.comparison-map .leaflet-container{height:380px}
+.comparison-list{border:1px solid #253240;background:#0e151f;padding:10px;display:flex;flex-direction:column;gap:6px;max-height:380px;overflow:auto}
+.cmp-row{display:grid;grid-template-columns:10px 1fr auto;gap:12px;align-items:center;background:#0a1119;border:1px solid #1e2a35;padding:12px;text-align:left;color:#dbe9ed;cursor:pointer;transition:border-color .15s,background-color .15s}
+.cmp-row:hover,.cmp-row.on{border-color:#00f0ff;background:#10202a}
+.cmp-row.all{display:block;text-align:center;font:10px 'DM Mono',monospace;color:#00f0ff}
+.cmp-row i{width:10px;height:10px;display:block}
+.cmp-row strong{display:block;font-size:13px}
+.cmp-row small{display:block;color:#81909e;font:9px 'DM Mono',monospace;margin-top:4px}
+.cmp-row em{font:500 16px 'DM Mono',monospace;font-style:normal;text-align:right}
+@media(max-width:900px){.comparison{padding:0 18px 30px}.comparison-head,.comparison-grid{display:block}.sev-legend{margin-top:14px}.comparison-list{margin-top:14px;max-height:none}}

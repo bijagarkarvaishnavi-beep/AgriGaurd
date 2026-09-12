@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 4 backend+frontend regression PASS. New signup, /fields/overview, and persistent Reports flows all verified. Ran full pytest suite 51/51 passing (11 new iter4 tests + 40 prior). Durability: sentinel PNG and PDF report both persist byte-identical across 'supervisorctl restart backend'. Frontend end-to-end validated: farmer signup → empty dashboard with CTA (no comparison, 'No saved scans yet') → create-first-field → comparison section appears with NO ANALYSIS legend → run SAR → HIGH 1 with 55.2% → download report → saved-reports appears with 1 row → second field polygon-input JSON accepted → comparison shows 2 rows → focus/show-all works. Admin smoke: dashboard, sentinel thumbnails now render with naturalWidth=172 (blob-fetch fix landed). Mobile 390x844 register form usable.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_regression_iter4.py",
+    "/app/backend/tests/test_regression_iter3.py",
+    "/app/backend/tests/test_mvp_api.py",
+    "/app/backend/tests/test_engine.py",
+    "/app/backend/tests/test_storage_postgis.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 210 dense one-liners — several endpoints (register, report, analyze) span 100+ chars; splitting into routers (auth, fields, reports, sentinel) would improve readability and testability but is optional.",
+    "register() coerces unknown role silently to 'farmer' (good), but no server-side enum on the Pydantic model — consider Literal['farmer','admin'] with a validator that returns 422 for unknown roles rather than silent coercion. Current behaviour matches the requested spec, so this is a design nit.",
+    "PDF filename Content-Disposition uses only ASCII-safe field-name slug; consider adding filename* UTF-8 variant for non-ASCII field names as a future enhancement.",
+    "SavedReports and FieldComparison both listen for the 'fields-changed' event and independently refetch — could be centralised via context, but current approach works reliably."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_regression_iter4.py (new)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated 51 tests)",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {"backend": "100% (51/51 pytest, incl. 11 new iter4)", "frontend": "100% of flows tested"},
+  "test_credentials": "admin@example.com / admin123. Registered test farmers (testui_*@example.com, TEST_iter4_*@example.com) remain in PostGIS; safe per prior agent-to-agent note. Created TEST_UI_First and TEST_UI_Second fields via UI and deleted them at end of run.",
+  "seed_data_creation": "Multiple TEST_iter4_* and testui_* farmer accounts registered (isolated, no fields). UI-created fields deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter4 acceptance: /api/auth/register 200 with role default farmer / admin / coerced; 409 dup; 422 short pwd / short name / bad email; new user gets empty overview + dashboard.field=null; owner isolation on /reports/{id} and /fields/{id}/analyses returns 404. /api/fields/overview returns array with latest_analysis (null for new fields, HIGH 55.2% after analyze). Reports: X-Report-Id header, ASCII-safe filename, size_bytes matches, file on disk at $ARTIFACT_DIR/reports/{id}.pdf, list newest-first, /api/reports/{id} returns identical PDF; foreign user gets 404. Durability confirmed: PDF+PNG byte-identical after `sudo supervisorctl restart backend` (waits ~8s). Health returns 200 storage='PostGIS (canonical)'. Frontend FieldComparison honours legend/focus/show-all/tooltip and SavedReports live-updates via saved-reports/saved-report-{id}. Sentinel artifact thumbnails (blob fetch fix) now render (naturalWidth=172). To run backend: cd /app/backend && REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest tests -q.",
+  "rca of the issue": "No new bugs found in this iteration. Prior iter3 issue about sentinel <img> Authorization header is now fixed — <img data-testid='sentinel-artifact-img-*'> elements have naturalWidth>0 confirming the blob-fetch fix. NaN cast RuntimeWarning noted in iter3 was not re-observed as breaking anything and is still non-functional. Everything requested in the review is passing."
+}

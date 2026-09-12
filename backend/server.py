@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
-import os, uuid, logging, io
+import os, uuid, logging, io, re
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import bcrypt, jwt
@@ -157,7 +157,28 @@ async def report(field_id: str, user=Depends(current)):
     pdf.setFillColorRGB(.75, .2, .18); pdf.setFont('Helvetica-Bold', 10); pdf.drawString(42, y - 15, 'DISCLAIMER'); pdf.setFillColorRGB(.2, .2, .2); pdf.setFont('Helvetica', 9); pdf.drawString(42, y - 32, 'This is an insurance-supporting evidence report, NOT an official insurance assessment.')
     pdf.drawString(42, y - 47, 'SAR, soil, weather, and recommendations may contain DEMO/ESTIMATED values. Verify with qualified assessors.')
     pdf.save(); out.seek(0)
-    return StreamingResponse(out, media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename="{field["name"].replace(" ", "_")}_flood_report.pdf"'})
+    rep = {'id': str(uuid.uuid4()), 'field_id': field_id, 'owner_id': user['id'], 'field_name': field['name'], 'flood_percentage': flood['flood_percentage'], 'severity': flood['severity'], 'sentinel_run_id': sentinel['id'] if sentinel else None, 'size_bytes': out.getbuffer().nbytes, 'created_at': now()}
+    rep['filename'] = f"{re.sub(r'[^A-Za-z0-9_-]+', '_', field['name']).strip('_')}_flood_report_{rep['created_at'][:10]}.pdf"
+    with open(os.path.join(raster.RESULTS_DIR, 'reports', rep['id'] + '.pdf'), 'wb') as fh: fh.write(out.getvalue())
+    await store.add_report(rep)
+    return StreamingResponse(out, media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename="{rep["filename"]}"', 'X-Report-Id': rep['id']})
+@api.get('/fields/{field_id}/reports')
+async def field_reports(field_id: str, user=Depends(current)):
+    await owned_field(field_id, user); return await store.reports(field_id)
+@api.get('/reports/{report_id}')
+async def download_report(report_id: str, user=Depends(current)):
+    rep = await store.get_report(report_id, user['id'])
+    path = os.path.join(raster.RESULTS_DIR, 'reports', report_id + '.pdf')
+    if not rep or not os.path.isfile(path): raise HTTPException(404, 'Report not found')
+    return StreamingResponse(open(path, 'rb'), media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename="{rep["filename"]}"'})
+@api.get('/fields/overview')
+async def fields_overview(user=Depends(current)):
+    out = []
+    for field in await store.list_fields(user['id']):
+        latest = await store.latest_analysis(field['id']); run = await store.latest_run(field['id'])
+        out.append({**field, 'latest_analysis': {'flood_percentage': latest['flood_percentage'], 'severity': latest['severity'], 'after_date': latest['after_date'], 'created_at': latest['created_at']} if latest else None,
+                    'latest_sentinel': {'flood_percentage': run['flood_percentage'], 'severity': run['severity'], 'source': run['source']} if run else None})
+    return out
 @api.get('/dashboard')
 async def dashboard(user=Depends(current)):
     field = await store.first_field(user['id'])

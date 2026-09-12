@@ -10,8 +10,8 @@ from pyproj import Transformer
 from PIL import Image
 import engine
 
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), 'sentinel_results')
-os.makedirs(RESULTS_DIR, exist_ok=True)
+RESULTS_DIR = (os.environ.get('ARTIFACT_DIR') or '').strip() or os.path.join(os.path.dirname(__file__), 'sentinel_results')
+os.makedirs(os.path.join(RESULTS_DIR, 'reports'), exist_ok=True)
 DEFAULT_POLYGON = [[51.505, -0.09], [51.51, -0.08], [51.508, -0.06], [51.502, -0.065]]
 SIZE = 256
 TO_3857 = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)

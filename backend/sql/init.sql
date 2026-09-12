@@ -31,3 +31,11 @@ CREATE TABLE IF NOT EXISTS sentinel_runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS sentinel_runs_field_idx ON sentinel_runs(field_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS reports (
+  id TEXT PRIMARY KEY,
+  field_id TEXT NOT NULL REFERENCES fields(id) ON DELETE CASCADE,
+  owner_id TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reports_field_idx ON reports(field_id, created_at DESC);

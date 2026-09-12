@@ -131,3 +131,7 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "pytest (29) passing locally incl. PostGIS roundtrip. Need full E2E regression: auth, field CRUD via map drawing, DEMO analysis ~55%, Sentinel DEMO run + artifacts + PDF, upload rejection, ownership isolation."
+
+agent_communication:
+  - agent: "main"
+    message: "Iteration 4: (1) Durable artifacts via ARTIFACT_DIR env (default backend/sentinel_results; docker volume artifact_data) + persisted PDF reports: GET /api/fields/{id}/reports, GET /api/reports/{id}, reports table. (2) Signup UI (Register form, role farmer/admin) using existing POST /api/auth/register; empty dashboard CTA create-first-field-button opens field form. (3) GET /api/fields/overview + FieldComparison map coloured by latest severity. Fixed TrendSignals crash for users with no fields. Iteration_3 covered PostGIS/draw/engine — do not repeat except quick smoke."
