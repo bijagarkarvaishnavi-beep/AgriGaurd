@@ -14,8 +14,26 @@ function FitBounds({polygon,fitKey}){
   return null;
 }
 
-export default function FieldDrawMap({polygon,onChange,fitKey}){
-  const center=polygon.length?polygon[0]:[51.505,-0.075];
+function MapController({location}){   const map=useMap();
+
+  useEffect(()=>{
+    if(location){
+      map.setView(location,15);
+    }
+  },[location,map]);
+
+  return null;
+}
+
+export default function FieldDrawMap({
+  polygon,
+  onChange,
+  fitKey,
+  selectedLocation
+}){
+const center=
+  selectedLocation ||
+  (polygon.length ? polygon[0] : [22.5,79.0]);
   const move=(i,latlng)=>onChange(polygon.map((p,j)=>j===i?[round(latlng.lat),round(latlng.lng)]:p));
   const remove=(i)=>onChange(polygon.filter((_,j)=>j!==i));
   return <div className="draw-map" data-testid="field-draw-map">
@@ -24,8 +42,17 @@ export default function FieldDrawMap({polygon,onChange,fitKey}){
       <button type="button" data-testid="draw-undo-button" disabled={!polygon.length} onClick={()=>onChange(polygon.slice(0,-1))}>UNDO</button>
       <button type="button" data-testid="draw-clear-button" disabled={!polygon.length} onClick={()=>onChange([])}>CLEAR</button>
     </div>
-    <MapContainer center={center} zoom={14} scrollWheelZoom={false} className="draw-canvas">
-      <TileLayer attribution="© OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
+    <MapContainer
+  center={center}
+  zoom={polygon.length ? 14 : 5}
+  scrollWheelZoom={true}
+  className="draw-canvas"
+  >
+      <TileLayer
+  attribution='Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+  url="https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+/>
+      <MapController location={selectedLocation}/>
       <ClickCapture onAdd={p=>onChange([...polygon,p])}/>
       <FitBounds polygon={polygon} fitKey={fitKey}/>
       {polygon.length>=3?<Polygon positions={polygon} pathOptions={{color:'#00f0ff',fillColor:'#00f0ff',fillOpacity:.18,weight:2,interactive:false}}/>:polygon.length===2?<Polyline positions={polygon} pathOptions={{color:'#00f0ff',dashArray:'4 6',weight:2,interactive:false}}/>:null}

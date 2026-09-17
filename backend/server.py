@@ -16,6 +16,12 @@ from storage import build_store
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title='SAR Satellite Crop Flood Engine', version='1.1.0')
+@app.get("/")
+async def root():
+    return {
+        "message": "AgriGaurd Backend API is running",
+        "docs": "/docs"
+    }
 api = APIRouter(prefix='/api')
 SECRET = os.environ.get('JWT_SECRET', 'local-demo-secret-change-me')
 store = None
