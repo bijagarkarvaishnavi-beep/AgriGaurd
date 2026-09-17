@@ -5,19 +5,175 @@ import FieldDrawMap from './FieldDrawMap';
 const API=`${process.env.REACT_APP_BACKEND_URL}/api`;
 const auth=()=>({Authorization:`Bearer ${localStorage.getItem('token')}`});
 async function api(path,opts={}){const r=await fetch(`${API}${path}`,{...opts,headers:{'Content-Type':'application/json',...auth(),...(opts.headers||{})}});if(!r.ok)throw Error((await r.json()).detail||'Request failed');return r.headers.get('content-type')?.includes('pdf')?r.blob():r.json()}
-const starter=[[51.505,-0.09],[51.51,-0.08],[51.508,-0.06],[51.502,-0.065]];
-const blank=()=>({name:'',crop:'Wheat',polygon:starter,text:JSON.stringify(starter),textError:''});
+const blank=()=>({
+  name:'',
+  crop:'Wheat',
+  polygon:[],
+  text:'[]',
+  textError:''
+});
 
 function FieldForm({initial,editing,onSaved,onCancel,onError}){
   const [form,setForm]=useState(initial);
   const [fitKey,setFitKey]=useState(0);
+
+  const [selectedLocation,setSelectedLocation]=useState(
+    initial.polygon?.length ? initial.polygon[0] : [22.5,79.0]
+  );
+
+  const [search,setSearch]=useState('');
+  const [locations,setLocations]=useState([]);
+  const [locationMessage,setLocationMessage]=useState('');
   const setPolygon=(polygon)=>setForm(f=>({...f,polygon,text:JSON.stringify(polygon),textError:''}));
+  async function searchLocation(){
+  if(!search.trim()){
+    setLocationMessage('Enter a location to search');
+    return;
+  }
+
+  try{
+    setLocationMessage('Searching...');
+    setLocations([]);
+
+    const params=new URLSearchParams({
+      q:search,
+      format:'jsonv2',
+      addressdetails:'1',
+      countrycodes:'in',
+      limit:'5'
+    });
+
+    const response=await fetch(
+      `https://nominatim.openstreetmap.org/search?${params.toString()}`
+    );
+
+    if(!response.ok){
+      throw new Error('Search failed');
+    }
+
+    const data=await response.json();
+
+    if(!data.length){
+      setLocationMessage('Location not found');
+      return;
+    }
+
+    setLocations(data);
+    setLocationMessage('');
+  }catch(error){
+    setLocationMessage('Could not search location');
+  }
+}
+
+function useCurrentLocation(){
+  if(!navigator.geolocation){
+    setLocationMessage('GPS is not supported by this browser');
+    return;
+  }
+
+  setLocationMessage('Getting current location...');
+
+  navigator.geolocation.getCurrentPosition(
+    position=>{
+      const lat=Number(position.coords.latitude.toFixed(6));
+      const lng=Number(position.coords.longitude.toFixed(6));
+
+      setSelectedLocation([lat,lng]);
+      setLocations([]);
+      setLocationMessage(`Current location: ${lat}, ${lng}`);
+      setFitKey(k=>k+1);
+    },
+    ()=>{
+      setLocationMessage(
+        'Could not get location. Allow location permission in browser.'
+      );
+    },
+    {
+      enableHighAccuracy:true,
+      timeout:10000,
+      maximumAge:0
+    }
+  );
+}
+
+function selectLocation(place){
+  const lat=Number(place.lat);
+  const lng=Number(place.lon);
+
+  setSelectedLocation([lat,lng]);
+  setSearch(place.display_name);
+  setLocations([]);
+  setLocationMessage(`Selected: ${place.display_name}`);
+  setFitKey(k=>k+1);
+  }
   const onText=(text)=>{try{const p=JSON.parse(text);if(!Array.isArray(p)||p.some(x=>!Array.isArray(x)||x.length!==2||x.some(n=>typeof n!=='number')))throw Error();setForm(f=>({...f,text,polygon:p,textError:''}));setFitKey(k=>k+1)}catch{setForm(f=>({...f,text,textError:'Expected JSON like [[lat,lng],[lat,lng],[lat,lng]]'}))}};
   async function save(e){e.preventDefault();if(form.polygon.length<3)return onError('Draw at least three vertices before saving');try{await api(editing?`/fields/${editing}`:'/fields',{method:editing?'PUT':'POST',body:JSON.stringify({name:form.name,crop:form.crop,polygon:form.polygon})});onSaved()}catch(x){onError(`Could not save field · ${x.message}`)}}
   return <form className="field-form" onSubmit={save} data-testid="field-form">
+    <div className="location-selector">
+
+  <h4>📍 FARM LOCATION</h4>
+
+  <p>
+    Search country, state, district, village or city,
+    or use your current location.
+  </p>
+
+  <div className="location-search">
+
+    <input
+      value={search}
+      onChange={e=>setSearch(e.target.value)}
+      placeholder="Search village, district, state or city"
+    />
+
+    <button
+      type="button"
+      onClick={searchLocation}
+    >
+      🔎 SEARCH
+    </button>
+
+    <button
+      type="button"
+      onClick={useCurrentLocation}
+    >
+      📍 CURRENT LOCATION
+    </button>
+
+  </div>
+
+  {locationMessage && (
+    <div className="location-message">
+      {locationMessage}
+    </div>
+  )}
+
+  {locations.length>0 && (
+    <div className="location-results">
+
+      {locations.map((place,index)=>(
+        <button
+          type="button"
+          key={`${place.place_id}-${index}`}
+          onClick={()=>selectLocation(place)}
+        >
+          <strong>{place.display_name}</strong>
+          <small>{place.type}</small>
+        </button>
+      ))}
+
+    </div>
+  )}
+
+</div>
     <input data-testid="field-name-input" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Field name" required/>
     <input data-testid="field-crop-input" value={form.crop} onChange={e=>setForm({...form,crop:e.target.value})} placeholder="Crop" required/>
-    <FieldDrawMap polygon={form.polygon} onChange={setPolygon} fitKey={fitKey}/>
+   <FieldDrawMap
+  polygon={form.polygon}
+  onChange={setPolygon}
+  fitKey={fitKey}
+  selectedLocation={selectedLocation}
+  />
     <textarea data-testid="field-polygon-input" value={form.text} onChange={e=>onText(e.target.value)} aria-label="Field polygon coordinates as [lat,lng] pairs"/>
     {form.textError&&<div className="text-error" data-testid="field-polygon-error">{form.textError}</div>}
     <div><button data-testid="save-field-button">SAVE FIELD</button><button type="button" data-testid="cancel-field-button" onClick={onCancel}>CANCEL</button></div>
